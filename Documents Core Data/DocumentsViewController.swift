@@ -9,10 +9,15 @@
 import UIKit
 import CoreData
 
-class DocumentsViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+class DocumentsViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate, UISearchResultsUpdating {
+    
     @IBOutlet weak var documentsTableView: UITableView!
     let dateFormatter = DateFormatter()
     var documents = [Document]()
+    var filteredDocuments = [Document]()
+    
+    // search controller
+    let searchController = UISearchController(searchResultsController: nil)
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -21,11 +26,31 @@ class DocumentsViewController: UIViewController, UITableViewDataSource, UITableV
 
         dateFormatter.dateStyle = .medium
         dateFormatter.timeStyle = .medium
+        
+        setupSearchController()
+        self.documentsTableView.tableFooterView = UIView()
     }
     
     override func viewWillAppear(_ animated: Bool) {
         fetchDocuments()
         documentsTableView.reloadData()
+    }
+    
+    // Runs everytime the searchBox text is altered
+    func updateSearchResults(for searchController: UISearchController) {
+        fetchDocuments()
+        documentsTableView.reloadData()
+    }
+    
+    func setupSearchController() {
+        definesPresentationContext = true
+        searchController.dimsBackgroundDuringPresentation = false
+        searchController.searchResultsUpdater = self
+        searchController.searchBar.barTintColor = UIColor(white: 0.9, alpha: 0.9)
+        searchController.searchBar.placeholder = "Search for name or content"
+        searchController.hidesNavigationBarDuringPresentation = false
+        
+        documentsTableView.tableHeaderView = searchController.searchBar
     }
     
     func alertNotifyUser(message: String) {
@@ -44,13 +69,33 @@ class DocumentsViewController: UIViewController, UITableViewDataSource, UITableV
         }
         let managedContext = appDelegate.persistentContainer.viewContext
         let fetchRequest: NSFetchRequest<Document> = Document.fetchRequest()
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "name", ascending: true)] // order results by document name ascending
         
-        do {
-            documents = try managedContext.fetch(fetchRequest)
-        } catch {
-            alertNotifyUser(message: "Fetch for documents could not be performed.")
-            return
+        // fetch all documents and set to documents variable
+        if (searchController.isActive == true && searchController.searchBar.text == "") || searchController.isActive == false {
+            //sort by ascending
+            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "name", ascending: true)]
+            
+            do {
+                documents = try managedContext.fetch(fetchRequest)
+            } catch {
+                alertNotifyUser(message: "Fetch for documents could not be performed")
+                return
+            }
+        }
+        
+        // attempt to unwrap text in searchController
+        // will fail if searchBar is empty
+        else {
+            if let searchString = self.searchController.searchBar.text {
+                fetchRequest.predicate = NSPredicate(format: "name contains[c] %@ || content contains[c] %@", searchString, searchString)
+                fetchRequest.sortDescriptors = [NSSortDescriptor(key: "name", ascending: true)] // order results by document name ascending
+                do {
+                    filteredDocuments = try managedContext.fetch(fetchRequest)
+                } catch {
+                    alertNotifyUser(message: "Fetch for documents could not be performed")
+                    return
+                }
+            }
         }
     }
     
@@ -65,7 +110,7 @@ class DocumentsViewController: UIViewController, UITableViewDataSource, UITableV
                 self.documents.remove(at: indexPath.row)
                 documentsTableView.deleteRows(at: [indexPath], with: .automatic)
             } catch {
-                alertNotifyUser(message: "Delete failed.")
+                alertNotifyUser(message: "Delete failed")
                 documentsTableView.reloadData()
             }
         }
@@ -76,14 +121,26 @@ class DocumentsViewController: UIViewController, UITableViewDataSource, UITableV
     }
     
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return documents.count
+        if searchController.isActive && searchController.searchBar.text != "" {
+            return filteredDocuments.count
+        }
+        else {
+            return documents.count
+        }
     }
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "documentCell", for: indexPath)
         
         if let cell = cell as? DocumentTableViewCell {
-            let document = documents[indexPath.row]
+            
+            var document = Document()
+            
+            if searchController.isActive == true && searchController.searchBar.text != "" {
+                document = filteredDocuments[indexPath.row]
+            } else {
+                document = documents[indexPath.row]
+            }
             cell.nameLabel.text = document.name
             cell.sizeLabel.text = String(document.size) + " bytes"
             
@@ -104,9 +161,13 @@ class DocumentsViewController: UIViewController, UITableViewDataSource, UITableV
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
         if let destination = segue.destination as? DocumentViewController,
-           let segueIdentifier = segue.identifier, segueIdentifier == "existingDocument",
-           let row = documentsTableView.indexPathForSelectedRow?.row {
+            let segueIdentifier = segue.identifier, segueIdentifier == "existingDocument",
+            let row = documentsTableView.indexPathForSelectedRow?.row {
+            if searchController.isActive == true && searchController.searchBar.text == "" {
                 destination.document = documents[row]
+            } else {
+                destination.document = filteredDocuments[row]
+            }
         }
     }
     
